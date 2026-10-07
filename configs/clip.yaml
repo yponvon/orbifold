@@ -1,0 +1,29 @@
+mcap: data/ironing_interview.mcap
+
+# Seconds from the start of the recording (57.6 s total).
+# Ironing runs the whole recording (stage 01). Dev on 5 s, then 15 s.
+clip:
+  start_s: 0.0
+  duration_s: 5.0
+
+fps: 30
+
+cameras:
+  headcam:
+    image: /headcam/image
+    intrinsics: /headcam/intrinsics
+    extrinsics: /headcam/extrinsics
+  exocam1:
+    image: /exocam1/image
+    intrinsics: /exocam1/intrinsics
+    extrinsics: /exocam1/extrinsics
+  exocam2:
+    image: /exocam2/image
+    intrinsics: /exocam2/intrinsics
+    extrinsics: /exocam2/extrinsics
+
+trackers:
+  upperbody: /upperbody/tracking
+  lowerbody: /lowerbody/tracking
+  hand_left: /hand/tracking/left
+  hand_right: /hand/tracking/right
