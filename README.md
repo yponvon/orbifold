@@ -4,9 +4,14 @@ Real-to-sim rebuild of one recording of a person ironing on a bed. We rebuild th
 
 ## Result
 
-**Video: [media/compare.mp4](media/compare.mp4)** *(placeholder until the final render is copied in)*
+Each video shows the ORIGINAL on the left and my render on the right. The rows are headcam, exocam1 and exocam2: 2 s, 60 frames.
 
-`media/compare.mp4`: REAL on the left, SIM on the right. The rows are headcam, exocam1 and exocam2. 60 frames at 30 fps. The pipeline writes this video to `out/compare.mp4` (stage 06), and the copy in `media/` is that file. Earlier rounds and their pixel-error scores are in `out/progress/LOG.md` on the dev machine and are summarised in the scorecard.
+| Track | Full resolution (3840×3240) | Web (1920 wide) |
+|---|---|---|
+| **Track A**: person and iron learned from the footage (mesh-anchored Gaussians, baked iron) | [media/trackA_final.mp4](media/trackA_final.mp4) | [media/trackA_final_web.mp4](media/trackA_final_web.mp4) |
+| **Track B**: fully modelled CG person and iron in Blender Cycles | [media/trackB_final.mp4](media/trackB_final.mp4) | [media/trackB_final_web.mp4](media/trackB_final_web.mp4) |
+
+Both tracks share the same calibrated cameras, fitted body and Gaussian-splat room. Earlier rounds and their pixel-error scores are summarised in the scorecard.
 
 ## Pipeline
 
