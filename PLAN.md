@@ -4,6 +4,7 @@
 
 ## Context
 The challenge: rebuild a real recording of someone ironing as a 3D scene whose renders are hard to tell apart from the footage. The hard rule is that **every pixel must come from our 3D scene**.
+Please also look at the artifact: https://claude.ai/artifact/ByXMP9A5LsQJhY8MmNptkz
 
 **Judged on:**
 - **Realism**
@@ -117,3 +118,68 @@ If a stage overruns by more than 15 min, take its fallback and move on:
 1. Add `.gitignore` (`*.mcap`, `data/`, `out/`, `.venv/`) and move `ironing_interview.mcap` → `data/`. Nothing large gets staged.
 2. Copy this plan to `orbifold/PLAN.md`, scaffold the layout and `pyproject.toml`, then commit and push.
 3. Write `01_inspect.py`. You run `uv sync && uv run scripts/01_inspect.py` (the sandbox here can't reach PyPI), then paste the output back, and we build stage 02 on it.
+
+---
+
+## Revised plan (after round 6), 2026-10-07
+
+### Why rounds 4–6 look bad (root causes, not symptoms)
+1. **The person is hand-made CG.** A parametric body with invented materials can never look like footage, whatever we tweak. Every round changed details on a fundamentally fake surface.
+2. **Our body doesn't sit on the real person.** Silhouette overlap is only about 0.6, and the legs look bent while the real ones are straight. So anything learned from the footage (the colour bake in preview 3) samples the wrong pixels and comes out muddy. This has to be fixed **first**.
+3. **The iron is boxes**, posed only by the hand's yaw. It is never measured from the footage.
+4. **The comparison video is downscaled** (640×360, mp4v), so everything looks blurry even though the renders are 1080p.
+5. **We judged by eye,** and late. Metrics only arrived in round 6.
+
+### Focus: the human and the iron only (the room is done)
+The room is treated as finished: its renders are cached and not touched again. All work, renders and judging are on **the person + iron region** of each camera.
+
+**Two separate assets, each with its own pipeline, render pass and metrics**
+| Asset | Contents | Own files | Own metrics |
+|---|---|---|---|
+| **Human** | body pose/shape, hands, clothes, hair, skin | `out/assets/human/` (fit, appearance model, `human.blend`) | silhouette IoU, 2D keypoints, LPIPS on the person mask |
+| **Iron** | shape, look, 6-DoF pose per frame, grip | `out/assets/iron/` (mesh or splat, `poses.npz`, `iron.blend`) | iron silhouette IoU, pose error, hand penetration |
+- Each asset renders as its own RGBA layer and is scored against its own real mask: the person from YOLO/SAM, the iron from a dedicated iron segmentation. One asset can be improved without disturbing the other.
+- Final frame order: room (cached), human layer, iron layer. Depth is respected where the hand wraps the iron.
+
+**How each iteration works**
+- **Render only the region:** a tight box around the person and iron per camera (from the projected body + iron, padded). Full resolution, using Blender's region render (`border` + crop), so each check is fast.
+- **Judge only the region:** real crop vs sim crop, side by side, at full resolution with high-quality encoding. Metrics are computed inside that box (`scripts/11_metrics.py`).
+- **Full frames only at the very end:** composite the human + iron region over the cached room render. Every pixel still comes from the 3D scene.
+
+**Steps (each must hit its target before the next)**
+| Step | What | Done when (measured in the person + iron region) |
+|---|---|---|
+| **H1. Body alignment** | Fit the pose to the **real silhouettes and 2D keypoints** in all 3 cameras, not only the 3D trackers. Fix the bent legs, torso lean and arm placement. | Silhouette IoU ≥ 0.85 (exo views); 2D keypoint error ≤ 8 px |
+| **H2. Hands** | Fingers, palm orientation, left hand flat on the cloth, right hand wrapped round the iron handle; checked against real close-ups (headcam). | Hand keypoint error ≤ 6 px; no fingers through the iron or the cloth |
+| **H3. Learned appearance** | Replace the CG materials with appearance learned from the footage: a Gaussian avatar (3DGS-Avatar / GaussianAvatar style) driven by the aligned body. Gives the real tunic and trim, black trousers, skin and hair. | Person-region LPIPS < 0.15 (now about 0.4); colour error per garment < 5% |
+| **H4. Body contact** | Feet planted while standing (no sliding, no floating); the body casts shadows onto the bed and floor. | Foot slide < 1 cm/s; feet on the floor ± 1 cm |
+| **I1. Iron shape and look** | Reconstruct the real iron from the footage (multi-view mask → splat or textured mesh): aqua teardrop, white top, green accents. | Iron silhouette IoU ≥ 0.8 |
+| **I2. Iron pose and grip** | Track its 6-DoF pose every frame; keep it under the right palm; soleplate flat on the cloth; moves with the hand. | No hand-into-iron penetration; iron pose error ≤ 1 cm / 5° |
+
+### Research (parallel agents)
+Three research agents write recommendations to `out/research/`:
+- `human_alignment.md`: multi-view silhouette and keypoint fitting.
+- `human_appearance.md`: Gaussian avatars and alternatives for our 3 views and 60 frames.
+- `iron.md`: few-view object reconstruction, 6-DoF tracking and hand-object contact.
+
+Their findings feed H1–H3 and I1–I2.
+
+### Progress check-ins
+- **An output every 5 minutes** so the user can check progress: the latest frame/crop (real vs sim), the current metrics and one line on what changed. Saved to `out/progress/` and shown in chat.
+- Long jobs (training, full renders) still report every 5 minutes with an interim snapshot or progress image, never silent.
+- Order of work: H1 → H2 → H3 → H4 → I1 → I2, each step gated by its "done when" metric. Shipping (README, scorecard, commit) only after these, and only when the user says so.
+
+### Working rules from now on
+- Every change is judged by the metrics script (`scripts/11_metrics.py`) against the real frames. The 10 worst frames drive the next fix.
+- No round is shown unless the person-region metrics improved.
+
+### Track B: user feedback to apply next (from trackB_firstframe_f30_*.jpg, 2026-10-07)
+- **headcam:** the shirt needs visible **buttons**; the **shirt's lower edge has a triangular shape** (the front tails); her **hair falls to the side**.
+- **exocam2:** the **shirt colour must match the original**; the **trousers are longer**; she is **not bending her leg** (straight standing legs).
+- **exocam1:** **buttons** present; her hair is **not in a bun** (loose to the side); the **shirt colour must match the original**.
+- **Already diagnosed by the agents:**
+  - the tunic is a lighter greige, about sRGB (0.63, 0.59, 0.50);
+  - the brown trim is on the sleeve cuffs and lower hip-pocket flaps;
+  - the hairy-looking arms come from the skin normal map;
+  - there are action cameras on both wrist braces;
+  - SMPL-X-based clothed-human models (ECON/PSHuman) need a registered download. Hunyuan3D-2 failed to install on a network timeout; retry with UV_HTTP_TIMEOUT=600.

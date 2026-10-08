@@ -3,7 +3,7 @@ name = "orbifold"
 version = "0.1.0"
 description = "Real-to-sim reconstruction of an ironing recording from MCAP"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "mcap>=1.2",
     "mcap-protobuf-support>=0.5",
@@ -15,15 +15,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Installed on the 5090 box only: `uv sync --extra gpu`
-gpu = [
-    "torch>=2.7",
-    "smplx>=0.1.28",
-    "bpy>=4.2,<4.3",
-]
+# Blender as a Python module; pinned to match desktop Blender 5.2.2 LTS
+render = ["bpy==5.2.2"]
+# Body model fitting: Anny (Apache-2.0, MakeHuman-based; no registration) on the 5090
+body = ["torch>=2.7", "anny>=0.6.1"]
+# Room reconstruction: Gaussian splats of the static room, person masks (5090 box)
+recon = ["torch>=2.7", "torchvision>=0.22", "gsplat>=1.5", "ultralytics>=8.3", "lpips>=0.1.4"]
 
 [dependency-groups]
 dev = ["ruff>=0.6", "pytest>=8", "pre-commit>=3.7"]
+
+# On Linux (the 5090), take CUDA 12.8 PyTorch builds: matches the box's nvcc, which
+# gsplat uses to compile its kernels. macOS gets the default PyPI builds.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [build-system]
 requires = ["hatchling"]
@@ -34,7 +45,7 @@ packages = ["src/orbifold"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
