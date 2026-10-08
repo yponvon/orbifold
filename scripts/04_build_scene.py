@@ -199,6 +199,13 @@ def main() -> None:
     # to the footage's greige tunic and a warmer skin tone.
     albedo["shirt"] = (0.36, 0.31, 0.22)
     albedo["skin"] = (0.48, 0.30, 0.21)
+    # Global colour fit (scripts/23_fit_cloth_color.py): one linear base colour per garment
+    # fitted so the rendered median matches the footage's median over all cameras.
+    fitted = Path("out/body/cloth_color_fit.json")
+    if fitted.exists():
+        albedo |= {r: tuple(v) for r, v in json.load(open(fitted))["albedo_linear"].items()}
+    if os.environ.get("SHIRT_LIN"):  # fitting iterations: linear base colour override
+        albedo["shirt"] = tuple(float(v) for v in os.environ["SHIRT_LIN"].split(","))
     print("albedo:", {r: tuple(round(v, 3) for v in a) for r, a in albedo.items()})
     json.dump(albedo, open(BODY.parent / "albedo_used.json", "w"), indent=1)
     mesh = bpy.data.meshes.new("body")
@@ -246,15 +253,65 @@ def main() -> None:
             cg_human.skin_material(mat, albedo[r])
         if r == "hair":
             cg_human.hair_look(mat)
+            # near-black brown, little specular/coat (the glossy version picked up a blue sheen)
+            bsdf.inputs["Base Color"].default_value = (*srgb((0.06, 0.05, 0.045)), 1)
+            bsdf.inputs["Roughness"].default_value = 0.45
+            bsdf.inputs["Specular IOR Level"].default_value = 0.3
+            bsdf.inputs["Coat Weight"].default_value = 0.0
         mesh.materials.append(mat)
     cg_human.brows_lashes(scene, n_frames)
     face_region = fit["face_region"]
     mesh.polygons.foreach_set("material_index", face_region.astype(np.int32))
     mesh.polygons.foreach_set("use_smooth", np.ones(len(face_region), bool))
+    # Soft hairline: the per-face hair region zig-zags, so turn it into a per-vertex mask,
+    # blur it over neighbouring vertices and let the skin shader blend into hair with it.
+    if "hair" in regions and "skin" in regions:
+        hi, si = regions.index("hair"), regions.index("skin")
+        nv, faces_np = len(verts[0]), fit["faces"]
+        hit, cnt = np.zeros(nv), np.zeros(nv)
+        for c in range(faces_np.shape[1]):
+            np.add.at(hit, faces_np[:, c], (face_region == hi).astype(float))
+            np.add.at(cnt, faces_np[:, c], 1.0)
+        hm = hit / np.maximum(cnt, 1)
+        e = np.empty(len(mesh.edges) * 2, np.int32)
+        mesh.edges.foreach_get("vertices", e)
+        e = e.reshape(-1, 2)
+        deg = np.bincount(e.ravel(), minlength=nv).astype(float)
+        for _ in range(4):
+            acc = hm.copy()
+            np.add.at(acc, e[:, 0], hm[e[:, 1]])
+            np.add.at(acc, e[:, 1], hm[e[:, 0]])
+            hm = acc / (deg + 1)
+        attr = mesh.attributes.new("hair_mask", "FLOAT", "POINT")
+        attr.data.foreach_set("value", hm.astype(np.float32))
+        fr = face_region.astype(np.int32).copy()
+        fr[fr == hi] = si
+        mesh.polygons.foreach_set("material_index", fr)
+        skin_m, hair_m = mesh.materials[si], mesh.materials[hi]
+        nt = skin_m.node_tree
+        out = nt.nodes["Material Output"]
+        front = out.inputs["Surface"].links[0].from_socket
+        hb, src = nt.nodes.new("ShaderNodeBsdfPrincipled"), hair_m.node_tree.nodes["Principled BSDF"]
+        for k in ("Base Color", "Roughness", "Specular IOR Level", "Coat Weight", "Coat Roughness"):
+            hb.inputs[k].default_value = src.inputs[k].default_value
+        att, ramp = nt.nodes.new("ShaderNodeAttribute"), nt.nodes.new("ShaderNodeMapRange")
+        att.attribute_name = "hair_mask"
+        ramp.interpolation_type = "SMOOTHSTEP"
+        ramp.inputs["From Min"].default_value, ramp.inputs["From Max"].default_value = 0.3, 0.7
+        mixh = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(att.outputs["Fac"], ramp.inputs["Value"])
+        nt.links.new(ramp.outputs["Result"], mixh.inputs["Fac"])
+        nt.links.new(front, mixh.inputs[1])
+        nt.links.new(hb.outputs["BSDF"], mixh.inputs[2])
+        nt.links.new(mixh.outputs["Shader"], out.inputs["Surface"])
 
     # The head camera sits inside the head: 05_render enables this mask for that camera.
     head_group = body.vertex_groups.new(name="head")
     head_group.add(np.unique(fit["faces"][fit["face_is_head"]]).tolist(), 1.0, "REPLACE")
+    # The tunic's collar is cut by a smooth rest-space sphere round the neck joint (below).
+    labels = [str(b) for b in fit["bone_labels"]]
+    neck_rest = fit["rest_bone_heads"][labels.index("neck01")]
+    NECK_CUT = 0.13  # larger cuts open a view down into the torso
     mask = body.modifiers.new("hide_head", "MASK")
     mask.vertex_group, mask.invert_vertex_group, mask.show_render = "head", True, False
     sub = body.modifiers.new("smooth", "SUBSURF")
@@ -322,14 +379,18 @@ def main() -> None:
             cloth.point_cache.frame_start, cloth.point_cache.frame_end = 0, n_frames - 1
             ob.modifiers.new("thickness", "SOLIDIFY").thickness = 0.003
             if g == "tunic":  # 05_render enables this for the head camera (neck opening)
-                labels = [str(b) for b in fit["bone_labels"]]
-                neck_rest = fit["rest_bone_heads"][labels.index("neck01")]
-                near = np.argmin(np.linalg.norm(fit["rest_vertices"] - neck_rest, axis=1))
-                neck0 = verts[0][near]  # neck joint carried to frame 0 by the nearest skin vertex
-                ids = np.flatnonzero(np.linalg.norm(V[0] - neck0, axis=1) < 0.12)
+                if "tunic_rest" in G:  # same rest-space sphere as the body's neck cut
+                    d = np.linalg.norm(G["tunic_rest"] - neck_rest, axis=1)
+                else:
+                    near = np.argmin(np.linalg.norm(fit["rest_vertices"] - neck_rest, axis=1))
+                    d = np.linalg.norm(V[0] - verts[0][near], axis=1)
+                ids = np.flatnonzero(d < NECK_CUT)
                 ob.vertex_groups.new(name="neck").add(ids.tolist(), 1.0, "REPLACE")
                 nm = ob.modifiers.new("hide_neck", "MASK")
                 nm.vertex_group, nm.invert_vertex_group, nm.show_render = "neck", True, False
+                ns = ob.modifiers.new("neck_smooth", "SUBSURF")  # round the cut's outline
+                ns.levels, ns.render_levels, ns.show_render = 0, 1, False
+                print(f"headcam neck cut: tunic {len(ids)} verts")
             garment_objs.append(ob)
             if g == "tunic" and "tunic_buttons" in G:  # buttons pinned to the placket
                 btn_mat = material("button", srgb((0.85, 0.83, 0.78)), 0.3)
@@ -362,6 +423,25 @@ def main() -> None:
                 collar.modifiers.new("round", "SUBSURF").render_levels = 1
         print(f"garments: {[o.name for o in garment_objs]} (cloth sim)")
 
+    # The head camera looks down into the open neck: inside faces read as her dark hair
+    # (the real headcam shows hair strands at the bottom edge there).
+    for name in ("body", "tunic"):
+        ob = bpy.data.objects.get(name)
+        for m in ob.data.materials if ob else ():
+            out = m.node_tree.nodes.get("Material Output")
+            if out is None or not out.inputs["Surface"].links or "backface" in m.node_tree.nodes:
+                continue
+            nt, front = m.node_tree, out.inputs["Surface"].links[0].from_socket
+            back = nt.nodes.new("ShaderNodeEmission")  # unlit: no light reaches inside the body
+            back.inputs["Color"].default_value = (0.05, 0.04, 0.035, 1.0)
+            back.inputs["Strength"].default_value = 1.0
+            geo, mix = nt.nodes.new("ShaderNodeNewGeometry"), nt.nodes.new("ShaderNodeMixShader")
+            mix.name = "backface"
+            nt.links.new(geo.outputs["Backfacing"], mix.inputs["Fac"])
+            nt.links.new(front, mix.inputs[1])
+            nt.links.new(back.outputs["Emission"], mix.inputs[2])
+            nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+
     # Appearance learned from the footage (03h): per-face-corner colours, shown unlit
     # (the footage already contains the room's lighting), like the splat room.
     if BAKED.exists():
@@ -386,27 +466,96 @@ def main() -> None:
             ob.data.materials.append(mat)
         print("appearance: baked from footage (unlit)")
 
-    # Black hair tied up in a bun at the back of the head, with a clip.
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=1, segments=24, ring_count=16)
-    tail = bpy.context.object
-    tail.name = "hair_bun"
-    tail.data.materials.append(bpy.data.materials["body_hair"])
-    for poly in tail.data.polygons:
-        poly.use_smooth = True
-    tail.rotation_mode = "QUATERNION"
+    # Dark shoulder-length hair: one smooth, wide, flattened mass from the top-back of the
+    # head that hugs the skull for ~6 cm, then hangs with gravity (world -z) past her right
+    # cheek (the exocam side) for ~20 cm, as in exocam1. Its shape is computed per frame in
+    # world space (one shape key per frame), pushed out of the body so it never penetrates.
+    # Rest frame of the head: z up, -y forward, +x = her left; skull y in [-0.13, 0.105],
+    # z in [-0.09, 0.17] about the head bone's head.
+    from mathutils.kdtree import KDTree
+
     R0 = fit["head_rest_pose"][:3, :3]
-    # In Anny's rest frame (z up, -y forward): behind and above the head bone's head.
-    off_local = R0.T @ np.array([0.0, 0.075, 0.12])
+    c_rest = np.array([0.0, -0.012, 0.04])  # skull centre
+    semi = np.array([0.092, 0.118, 0.128]) + 0.008  # skull ellipsoid + scalp-hair margin
+    d0, d1 = np.array([0.0, 0.6, 0.8]), np.array([-0.55, 0.45, 0.7])  # top-back -> right
+    n_hug, n_hang, n_sec = 6, 16, 12
+    u_all = np.linspace(0.0, 1.0, n_hug + n_hang)
+    width = 0.085 - 0.03 * u_all
+    width[0] = 0.06
+    thick = 0.018 - 0.008 * u_all
+    world_down = np.array([0.0, 0.0, -1.0])
+    V = np.zeros((n_frames, (n_hug + n_hang) * n_sec, 3))
     for f in range(n_frames):
         Hf = fit["head_pose"][f]
-        Rw = Hf[:3, :3] @ R0.T  # head rotation relative to rest
-        tail.location = Hf[:3, 3] + Hf[:3, :3] @ off_local
-        tail.rotation_quaternion = (
-            Matrix(Rw.tolist()).to_quaternion() @ Matrix.Rotation(0.6, 4, "X").to_quaternion()
-        )
-        tail.scale = (0.035, 0.03, 0.05)
-        tail.keyframe_insert("location", frame=f)
-        tail.keyframe_insert("rotation_quaternion", frame=f)
+        Rw = Hf[:3, :3] @ R0.T  # rest -> world
+        to_w = lambda p: Hf[:3, 3] + Rw @ p  # noqa: E731
+        centre_w = to_w(c_rest)
+        out = Rw @ np.array([-1.0, 0.0, 0.0])  # her right
+        out = out - out[2] * world_down * -1 if False else out
+        out[2] = 0.0
+        out /= max(np.linalg.norm(out), 1e-6)
+        pts, nrm = [], []
+        for i in range(n_hug):  # hugs the skull, follows the head
+            d = d0 + (d1 - d0) * i / (n_hug - 1)
+            d /= np.linalg.norm(d)
+            d = d / np.linalg.norm(d / semi)  # onto the ellipsoid
+            pts.append(to_w(c_rest + d))
+            nrm.append(Rw @ (d / semi**2) / np.linalg.norm(d / semi**2))
+        A = pts[-1]
+        for j in range(1, n_hang + 1):  # hangs with gravity, a little out from the face
+            sj = 0.20 * j / n_hang
+            ramp = min(sj / 0.06, 1.0)
+            pts.append(A + sj * world_down + out * 0.025 * ramp * ramp * (3 - 2 * ramp))
+            n = (1 - ramp) * nrm[n_hug - 1] + ramp * out
+            nrm.append(n / np.linalg.norm(n))
+        pts = np.array(pts)
+        for _ in range(2):  # smooth the bend between the two parts
+            pts[1:-1] = 0.25 * pts[:-2] + 0.5 * pts[1:-1] + 0.25 * pts[2:]
+        kd_pts = fit["vertices"][f]
+        kd = KDTree(len(kd_pts))
+        for k, v in enumerate(kd_pts):
+            kd.insert(v.tolist(), k)
+        kd.balance()
+        ring_all, w_prev = [], None
+        for i, p in enumerate(pts):
+            tng = pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)]
+            tng /= np.linalg.norm(tng)
+            n = nrm[i] - nrm[i].dot(tng) * tng
+            n /= np.linalg.norm(n)
+            w = np.cross(tng, n)
+            if w_prev is not None and w.dot(w_prev) < 0:
+                w = -w
+            w_prev = w
+            for k in range(n_sec):
+                a = 2 * np.pi * k / n_sec
+                q = p + w * width[i] / 2 * np.cos(a) + n * thick[i] / 2 * np.sin(a)
+                for _ in range(3):  # push out of the body (head, neck, shoulders)
+                    co, _idx, dist = kd.find(q.tolist())
+                    if dist < 0.01:
+                        dirn = q - np.array(co)
+                        dirn = dirn / dist if dist > 1e-6 else n
+                        q = q + dirn * (0.01 - dist)
+                ring_all.append(q)
+        V[f] = np.array(ring_all)
+    faces = []
+    n_ring = n_hug + n_hang
+    for i in range(n_ring - 1):
+        for k in range(n_sec):
+            k2 = (k + 1) % n_sec
+            faces.append([i * n_sec + k, i * n_sec + k2, (i + 1) * n_sec + k2, (i + 1) * n_sec + k])
+    faces = [fc + [-1] * (n_sec - 4) for fc in faces]
+    faces.append(list(range(n_sec))[::-1])
+    faces.append(list(range((n_ring - 1) * n_sec, n_ring * n_sec)))
+    faces = np.array(faces)
+    uv = np.zeros((len(faces), n_sec, 2))
+    # "ponytail" is hidden from the head camera by 05_render
+    hair = cg_human._keyed_mesh(scene, "ponytail", V, faces, uv, bpy.data.materials["body_hair"],
+                                n_frames)  # fmt: skip
+    for poly in hair.data.polygons:
+        poly.use_smooth = True
+    sub = hair.modifiers.new("smooth", "SUBSURF")
+    sub.levels = sub.render_levels = 2
+    print("hair: loose mass hanging past the right cheek (per-frame shape keys)")
 
     # --- Iron: the CG model of src/orbifold/cg_iron.py (pose track out/assets/iron/poses.npz)
     import sys
@@ -468,7 +617,7 @@ def main() -> None:
 
     w, h_px = C["exocam1_size"]
     scene.render.resolution_x, scene.render.resolution_y = int(w), int(h_px)
-    blend = str((OUT / "scene.blend").resolve())
+    blend = str(Path(os.environ.get("SCENE_OUT", OUT / "scene.blend")).resolve())
     bpy.ops.wm.save_as_mainfile(filepath=blend)
     if garment_objs:
         for ob in garment_objs:
@@ -477,7 +626,7 @@ def main() -> None:
             bpy.ops.ptcache.bake_all(bake=True)
         print("cloth simulation baked")
         bpy.ops.wm.save_as_mainfile(filepath=blend)
-    print(f"saved {OUT / 'scene.blend'}: Anny body {len(verts[0])} vertices, {n_frames} frames")
+    print(f"saved {blend}: Anny body {len(verts[0])} vertices, {n_frames} frames")
     print(f"floor z={floor_z:.3f}  bed top z={bed_top:.3f}  facing yaw={np.degrees(yaw):.0f} deg")
 
 

@@ -48,6 +48,31 @@ def ring(face_set: np.ndarray, faces: np.ndarray, seed_verts: np.ndarray, n: int
     return hit
 
 
+def smooth_boundary(P: np.ndarray, faces: np.ndarray, iters: int = 15) -> np.ndarray:
+    """Taubin (lambda/mu, no shrinkage) smoothing ALONG the open boundary loops only.
+
+    The garment is cut from whole body triangles, so its sleeve openings / hem / neckline
+    zig-zag along triangle edges. Each boundary vertex is pulled towards the mean of its two
+    boundary neighbours; interior vertices stay put. Linear in P, so applying it to every
+    frame (P: (..., V, 3)) moves the edge consistently over time.
+    """
+    e = np.sort(faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1)
+    ue, cnt = np.unique(e, axis=0, return_counts=True)
+    be = ue[cnt == 1]  # boundary edges: used by exactly one face
+    deg = np.bincount(be.ravel(), minlength=P.shape[-2])
+    be = be[(deg[be] == 2).all(1)]  # skip non-manifold junctions (kept fixed)
+    deg = np.bincount(be.ravel(), minlength=P.shape[-2])
+    mv = deg == 2
+    Q = np.moveaxis(P, -2, 0).copy()  # (V, ..., 3)
+    for k in range(2 * iters):
+        nb = np.zeros_like(Q)
+        np.add.at(nb, be[:, 0], Q[be[:, 1]])
+        np.add.at(nb, be[:, 1], Q[be[:, 0]])
+        Q[mv] += (0.5 if k % 2 == 0 else -0.53) * (nb[mv] / 2 - Q[mv])
+    print(f"boundary smoothing: {int(mv.sum())} edge vertices")
+    return np.moveaxis(Q, 0, -2)
+
+
 def build(fit, keep: np.ndarray, offset: np.ndarray, pin: np.ndarray, trim: np.ndarray) -> dict:
     """Cut faces `keep` out of the body, offset per vertex, re-index."""
     faces = fit["faces"][keep]
@@ -122,7 +147,7 @@ def main() -> None:
             low = np.arange(ib + 1)
             ip = low[np.argmax(np.where(np.isfinite(prof[low]), prof[low], -np.inf))]
             hull = np.full(len(zs), prof[ib])
-            if prof[ip] > prof[ib] and ip < ib:
+            if prof[ip] > prof[ib] and ip < ib and sgn < 0:  # back: straight down from blades
                 t = np.clip((zs - zs[ip]) / (zs[ib] - zs[ip]), 0, 1)
                 hull = prof[ip] + (prof[ib] - prof[ip]) * t
             hull[ib:] = -np.inf  # above the blades: follow the body
@@ -131,10 +156,16 @@ def main() -> None:
         gap = (target + 0.006 - sgn * rest[:, 1]) / np.abs(rn[:, 1]).clip(0.3)
         w = np.clip((sgn * rn[:, 1] - nmin) / 0.25, 0, 1)  # fade in towards the sides
         drape = np.clip(gain * w * np.nan_to_num(gap, neginf=0.0), 0, 0.08)
+        if sgn > 0:  # back: no sack-like flare at the hem (6 cm at hem+25 cm -> 1.5 cm at hem)
+            cap = np.interp(z, [hem_z, hem_z + 0.25, hem_z + 0.35], [0.015, 0.06, 0.08])
+            drape = np.minimum(drape, cap)
         off_t = np.where(side, np.maximum(off_t, drape), off_t)
     off_t = smooth(off_t, faces, 10)
     pin_t = np.clip((z - hem_z) / (chest_z - hem_z), 0, 1) ** 0.7  # free hem, pinned shoulders
     pin_t = np.where(sleeve, 0.5, pin_t)
+    # Back panel bottom 10 cm: firmer pins so the sim doesn't fold/crumple the hem.
+    back_hem = (rn[:, 1] > 0.3) & (z < hem_z + 0.10) & ~sleeve
+    pin_t = np.where(back_hem, np.maximum(pin_t, 0.5), pin_t)
     # Brown trim: sleeve cuffs (next to bare arm), front placket, pocket top edge.
     cuff = ring(tunic, faces, np.unique(faces[arm_skin]), 1)
     tri = rest[faces]
@@ -151,9 +182,23 @@ def main() -> None:
     # straight lines instead of triangle saw-teeth.
     tv_all = np.unique(faces[tunic])
     opening = np.intersect1d(tv_all, np.unique(faces[arm_skin]))
-    from scipy.spatial import cKDTree
-
-    cuffd = cKDTree(rest[opening]).query(rest[tv_all])[0] if len(opening) else np.full(len(tv_all), 9.0)
+    # Cuff: distance to a PLANE across each sleeve (perpendicular to the upper-arm axis, at
+    # the median opening), so the band edge is straight even though the cut is jagged.
+    cuffd = np.full(len(tv_all), 9.0)
+    cuff_planes = []  # (side, rest head, rest axis, plane t0, tunic-vertex mask near cuff)
+    rt = rest[tv_all]
+    for side in ("L", "R"):
+        h0, h1 = heads[f"upperarm01.{side}"], heads[f"lowerarm01.{side}"]
+        ax = (h1 - h0) / np.linalg.norm(h1 - h0)
+        t = (rt - h0) @ ax
+        radial = np.linalg.norm((rt - h0) - t[:, None] * ax, axis=1)
+        o = np.isin(tv_all, opening) & (np.sign(rt[:, 0]) == (1 if side == "L" else -1))
+        if not o.any():
+            continue
+        t0 = np.median(t[o])
+        near = (radial < 0.09) & (t > 0) & (np.sign(rt[:, 0]) == np.sign(h0[0]))
+        cuffd = np.where(near, np.minimum(cuffd, np.abs(t0 - t)), cuffd)
+        cuff_planes.append((side, h0, ax, t0, near & (np.abs(t - t0) < 0.05)))
     trim_params = np.array([heads["spine01"][1], hip_z + 0.05, chest_z + 0.06], np.float32)
 
     # --- Wide trousers: legs below the tunic hem, widening towards the ankle -------------
@@ -168,7 +213,32 @@ def main() -> None:
                     ("trousers", build(fit, legs, off_l, pin_l, no_trim))):  # fmt: skip
         out |= {f"{name}_{k}": v for k, v in g.items()}
         if name == "tunic":  # same vertex order as build(): np.unique of the kept faces
-            out["tunic_rest"] = rest[tv_all].astype(np.float32)
+            # De-saw-tooth the sleeve openings, hem and neckline (all frames + rest alike).
+            # Sleeve openings first snapped onto their cuff plane (cuffd = 0) so the cuff
+            # band edge is a clean ring; per frame the plane rides the upper arm (rigid
+            # Kabsch fit of the body's upper-arm vertices, rest -> frame).
+            e = np.sort(g["faces"][:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1)
+            ue, cnt = np.unique(e, axis=0, return_counts=True)
+            bnd = np.zeros(len(tv_all), bool)
+            bnd[ue[cnt == 1].ravel()] = True
+            V, R0 = g["vertices"].astype(np.float64), rest[tv_all].astype(np.float64)
+            for side, h0, ax, t0, mask in cuff_planes:
+                m = bnd & mask
+                R0[m] += (t0 - (R0[m] - h0) @ ax)[:, None] * ax
+                arm = np.char.startswith(vb, "upperarm") & np.char.endswith(vb, f".{side}")
+                A = rest[arm] - rest[arm].mean(0)
+                for f in range(len(V)):
+                    B = fit["vertices"][f][arm]
+                    U, _, Wt = np.linalg.svd(A.T @ (B - B.mean(0)))
+                    D = np.diag([1, 1, np.sign(np.linalg.det(U @ Wt))])
+                    Rf = (U @ D @ Wt).T  # rest -> frame rotation
+                    axf = Rf @ ax
+                    p0 = Rf @ (h0 + t0 * ax - rest[arm].mean(0)) + B.mean(0)
+                    V[f, m] += ((p0 - V[f, m]) @ axf)[:, None] * axf
+                print(f"cuff {side}: snapped {int(m.sum())} sleeve-edge vertices to the plane")
+            # De-saw-tooth the sleeve openings, hem and neckline (all frames + rest alike).
+            out["tunic_vertices"] = smooth_boundary(V, g["faces"]).astype(np.float32)
+            out["tunic_rest"] = smooth_boundary(R0, g["faces"]).astype(np.float32)
             out["tunic_cuffd"] = cuffd.astype(np.float32)
             out["tunic_trim_params"] = trim_params  # front y, placket z min, pocket z
         print(f"{name}: {g['vertices'].shape[1]} vertices, {len(g['faces'])} faces, "

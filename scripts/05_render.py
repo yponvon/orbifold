@@ -118,11 +118,20 @@ def main() -> None:
         tunic = bpy.data.objects.get("tunic")
         if tunic and "hide_neck" in tunic.modifiers:
             tunic.modifiers["hide_neck"].show_render = cam == "headcam"
+            if "neck_smooth" in tunic.modifiers:
+                tunic.modifiers["neck_smooth"].show_render = cam == "headcam"
+        for ob in bpy.data.objects:  # placket buttons: white dots right under the head camera
+            if ob.name.startswith("button_"):
+                ob.hide_render = cam == "headcam"
+        # The brown placket trim reads as a jagged stripe from above: plain fabric there.
+        if tunic and len(tunic.material_slots) > 1:
+            trim = bpy.data.materials.get("trim_brown")
+            tunic.material_slots[1].material = tunic.material_slots[0].material if cam == "headcam" else trim
         # Cut away the collar and neck right next to the head camera.
         scene.camera.data.clip_start = 0.22 if cam == "headcam" else 0.01
         scene.camera.data.dof.use_dof = False  # the footage is in focus everywhere
         # Eyebrows/eyelashes sit inside the head camera's view of the chest: hide them too.
-        for name in ("hair_bun", "ponytail", "iron_cord", "cg_brows", "cg_lashes", "collar"):
+        for name in ("hair_bun", "ponytail", "hair_strands", "iron_cord", "cg_brows", "cg_lashes", "collar"):
             if name in bpy.data.objects:
                 bpy.data.objects[name].hide_render = cam == "headcam"
         out_dir = (Path(args.out) / cam).resolve()
