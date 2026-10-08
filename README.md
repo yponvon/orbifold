@@ -11,6 +11,8 @@ Each video shows the ORIGINAL on the left and my render on the right. The rows a
 | **Track A**: person and iron learned from the footage (mesh-anchored Gaussians, baked iron) | [media/trackA_final.mp4](media/trackA_final.mp4) | [media/trackA_final_web.mp4](media/trackA_final_web.mp4) |
 | **Track B**: fully modelled CG person and iron in Blender Cycles | [media/trackB_final.mp4](media/trackB_final.mp4) | [media/trackB_final_web.mp4](media/trackB_final_web.mp4) |
 
+Results page with both videos, the step-by-step method and scores: [docs/index.html](docs/index.html) (open it in a browser after cloning).
+
 Both tracks share the same calibrated cameras, fitted body and Gaussian-splat room. Earlier rounds and their pixel-error scores are summarised in the scorecard.
 
 ## Pipeline

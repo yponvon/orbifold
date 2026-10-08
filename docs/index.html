@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbifold Ironing Results</title>
+<style>
+:root{
+  --bg:#fbfaf8; --surface:#ffffff; --text:#1d1d1f; --muted:#5f6368; --line:#e3e1dc;
+  --accent:#0f766e; --accent-soft:#e6f4f2; --warn:#9a3412; --warn-soft:#fdf0e8;
+  --code:#f2f0ec;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141516; --surface:#1c1d1f; --text:#e9e9ea; --muted:#a3a7ad; --line:#2f3134;
+    --accent:#5eead4; --accent-soft:#16302d; --warn:#fdba8c; --warn-soft:#33241b;
+    --code:#26282b;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141516; --surface:#1c1d1f; --text:#e9e9ea; --muted:#a3a7ad; --line:#2f3134;
+  --accent:#5eead4; --accent-soft:#16302d; --warn:#fdba8c; --warn-soft:#33241b;
+  --code:#26282b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:32px 16px 80px}
+header{padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:8px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:1.35rem;margin:44px 0 12px;letter-spacing:-.005em}
+h3{font-size:1.05rem;margin:22px 0 8px}
+p{margin:0 0 12px}
+.sub{color:var(--muted);margin:0}
+nav{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:14px;font-size:.92rem}
+nav a{color:var(--muted);text-decoration:none}
+nav a:hover{color:var(--accent)}
+a{color:var(--accent)}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.88em}
+.rule{border-left:4px solid var(--accent);background:var(--accent-soft);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+.note{border-left:4px solid var(--warn);background:var(--warn-soft);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}
+.card h3{margin-top:0}
+video,img{display:block;width:100%;height:auto;border-radius:8px;background:#000}
+video{aspect-ratio:3840/3240}
+.legend{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:8px 2px 0}
+.cap{font-size:.9rem;color:var(--muted);margin:8px 2px 0}
+.grid2{display:grid;grid-template-columns:1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:1fr;gap:12px}
+@media (min-width:760px){.grid2{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:repeat(3,1fr)}}
+ul{padding-left:20px;margin:0 0 12px}
+li{margin:3px 0}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.92rem;min-width:560px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;background:var(--code)}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;font-size:.75rem;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.tag.part{background:var(--warn-soft);color:var(--warn)}
+.history{display:grid;grid-template-columns:1fr;gap:18px}
+@media (min-width:760px){.history{grid-template-columns:1fr 1fr}}
+.history figure{margin:0}
+.history figcaption{font-size:.9rem;margin-top:6px}
+.history figcaption b{color:var(--accent)}
+footer{margin-top:48px;color:var(--muted);font-size:.85rem;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Rebuilding a real ironing recording in 3D</h1>
+  <p class="sub">Orbifold real-to-sim hackathon. Results, method, scores and known flaws.</p>
+  <nav>
+    <a href="#challenge">Challenge</a><a href="#results">Results</a><a href="#how">How it works</a>
+    <a href="#scores">Scores</a><a href="#brief">Against the brief</a><a href="#flaws">Flaws &amp; next steps</a><a href="#history">History</a>
+  </nav>
+</header>
+
+<section id="challenge">
+  <h2>1. The challenge</h2>
+  <p>I was given one real recording of a person ironing clothes on a bed. The task was to rebuild it as a 3D scene (cameras, room, person with hands, and the iron) and render that scene from the same cameras so the result is hard to tell apart from the footage. The recording is a 57.6 s MCAP file with three cameras: one head camera and two tripod cameras (the brief said three tripod cameras). Each is 1920×1080 at 30 fps, and the file includes 3D tracking of 62 body and hand joints. I render the first 2 s. Entries are judged on <b>Realism</b>, <b>Fidelity</b>, <b>Physics</b> and <b>Honesty</b>.</p>
+  <div class="rule"><b>The one rule:</b> "Every pixel must come from your 3D scene. No filters or video models painted over the real footage."</div>
+</section>
+
+<section id="results">
+  <h2>2. Results</h2>
+  <p>Each video shows the <b>original on the left</b> and <b>my render on the right</b>. The rows are the head camera, tripod camera 1 (exocam1) and tripod camera 2 (exocam2). Each clip is 2 s (60 frames) at full resolution, so open it full-screen to see detail.</p>
+
+  <div class="card">
+    <h3>Track A: person and iron learned from the footage</h3>
+    <!--TRACKA--><video src="trackA_final_web.mp4" poster="trackA_final_f30.jpg" controls playsinline muted loop autoplay preload="auto" style="width:100%"></video><div class="legend"><span>Original</span><span>Mine</span></div><p class="cap">Rows: headcam, exocam1, exocam2. Crisp outline: person and room blended at her silhouette, steadier edges, sharper head-camera room. <a href="trackA_final.mp4" download>Download full resolution (3840×3240)</a></p><!--/TRACKA-->
+  </div>
+
+  <div class="card">
+    <h3>Track B: fully modelled CG person and iron</h3>
+    <!--TRACKB--><video src="trackB_v2_web.mp4" poster="trackB_v2_f30.jpg" controls playsinline muted loop autoplay preload="auto" style="width:100%"></video><div class="legend"><span>Original</span><span>Mine</span></div><p class="cap">Rows: headcam, exocam1, exocam2. v2: CG iron, eyelashes hidden in the headcam, legs no longer cut by the bed, triangular front hem, buttons. Every 2nd frame at real-time speed. <a href="trackB_v2.mp4" download>Download full resolution (3840×3240)</a></p><!--/TRACKB-->
+  </div>
+</section>
+
+<section id="how">
+  <h2>3. How each track works</h2>
+
+  <p>Every pixel in my video is rendered from a 3D scene. The real footage is used only to fit and train the 3D models and to score the results; no footage pixels are copied into the output, and no filters or video models are applied. Steps 1–6 are the same in both tracks.</p>
+
+  <div class="card">
+    <h3>Track A: learned from the footage, step by step</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th style="width:4%">#</th><th style="width:13%">Step</th><th style="width:21%">Method</th><th style="width:22%">Code</th><th>What it does exactly</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td><b>Read the recording</b></td><td>MCAP decoding of zstd-compressed protobuf messages</td><td><code>scripts/01_inspect.py</code><br><code>scripts/02_extract.py</code></td><td>Extracts the 60 clip frames per camera (<code>out/clip/frames/&lt;cam&gt;/</code>), the lens intrinsics <code>K</code>, the head camera's per-frame pose <code>T_world_cam</code> and the 62 tracked joints <code>xyz</code> (F×62×3).</td></tr>
+        <tr><td class="num">2</td><td><b>Calibrate the cameras</b></td><td>Multi-view Perspective-n-Point (PnP), RANSAC + Levenberg–Marquardt</td><td><code>scripts/01b_calibrate.py</code></td><td>One fixed pose per tripod camera, solved with <code>cv2.solvePnPRansac</code> + <code>solvePnPRefineLM</code> over the joints of the whole 57 s recording. The head camera keeps its recorded per-frame pose. Writes <code>out/calib/static_cams.npz</code>.</td></tr>
+        <tr><td class="num">3</td><td><b>Detect 2D keypoints</b></td><td>2D human pose estimation (YOLO pose)</td><td><code>scripts/03a_detect_2d.py</code></td><td>COCO-17 keypoints on every frame of exocam1 and exocam2.</td></tr>
+        <tr><td class="num">4</td><td><b>Fit the body</b></td><td>Parametric body model fitting (Anny, 104 bones)</td><td><code>scripts/03b_fit_body.py</code></td><td>PyTorch optimisation. Per frame: every bone's rotation and the root position. Shared over the clip: body shape. Loss = 3D joint distance + 2D keypoint reprojection + temporal smoothness + a pose prior. Writes <code>out/body/fit.npz</code>; mean joint error 1.2 cm.</td></tr>
+        <tr><td class="num">5</td><td><b>Build the room</b></td><td>3D Gaussian Splatting, with per-camera colour and per-image exposure modelling</td><td><code>scripts/07_room_data.py</code><br><code>scripts/08_train_room.py</code><br><code>scripts/09_render_room.py</code></td><td>Trains a gsplat model on frames with the person masked out (YOLO segmentation ∪ the projected skeleton). Learns a pose correction per head-camera image, a 3×3 colour matrix + bias per camera, and an exposure gain per image. Renders at full 1920×1080.</td></tr>
+        <tr><td class="num">6</td><td><b>Sharpen the head-camera room</b></td><td>BARF-style coarse-to-fine pose refinement + MCMC densification</td><td><code>scripts/08b_train_room_sharp.py</code><br><code>scripts/09c_render_room_sharp.py</code></td><td>Fine-tunes the room for the head camera: poses are learned from step 0, the first steps run at half resolution, up to 2M Gaussians, and the blurriest 25% of frames are dropped.</td></tr>
+        <tr><td class="num">7</td><td><b>Trace the person</b></td><td>Instance segmentation (YOLO11x-seg)</td><td><code>scripts/30_human_gs_masks.py</code></td><td>Keeps the person instances that overlap the projected body mesh. The upside-down head camera is segmented both as-is and rotated 180°, and the two are merged. Writes <code>out/assets/human_gs/masks/</code>.</td></tr>
+        <tr><td class="num">8</td><td><b>Build the person model</b></td><td>Mesh-anchored 3D Gaussian avatar with a temporal DCT residual basis</td><td><code>scripts/30_human_gs_common.py</code></td><td>About 86k Gaussians anchored by barycentric coordinates on the body, tunic and trouser triangles. Each has a learnable offset in its triangle's frame, a smooth per-frame residual (DCT basis), degree-1 spherical-harmonic colour, opacity, scale and rotation.</td></tr>
+        <tr><td class="num">9</td><td><b>Train the person</b></td><td>Differentiable rendering with an L1 + SSIM photometric loss</td><td><code>scripts/30_human_gs_train.py</code></td><td>Trained on the original full-resolution frames of all 3 cameras with <code>0.8·L1 + 0.2·(1−SSIM)</code> inside the person mask, plus coverage, offset and anisotropy regularisers. Checked on held-out frames (LPIPS 0.07 in the tripod views).</td></tr>
+        <tr><td class="num">10</td><td><b>Clean the person render</b></td><td>Gaussian shape reshaping + temporal median of the silhouette</td><td><code>scripts/32_human_gs_clean_render.py</code></td><td>Needle Gaussians (longest axis &gt; 5× the middle axis) are cut to 3×, flat discs get a minimum thickness, and the person's alpha takes a 3-frame median.</td></tr>
+        <tr><td class="num">11</td><td><b>Trace the iron</b></td><td>Promptable video segmentation (SAM 2.1)</td><td><code>scripts/20_iron_masks.py</code></td><td>Each mask is prompted by a box around the projected 3D iron, points on its aqua pixels, and the hand as a negative point.</td></tr>
+        <tr><td class="num">12</td><td><b>Fit the iron's pose</b></td><td>Multi-view silhouette-based 6-DoF pose estimation</td><td><code>scripts/20_iron_fit.py</code></td><td>Per frame: x, y, yaw and lift, with the soleplate kept flat on the bed. Fitted to the traced masks with the hand ignored. Writes <code>out/assets/iron/poses.npz</code>.</td></tr>
+        <tr><td class="num">13</td><td><b>Colour the iron</b></td><td>Texture baking from multi-view observations</td><td><code>scripts/20_iron_layer.py</code></td><td>Each face gets the median of its visible pixels over 3 cameras × 60 frames. Renders an RGBA + depth layer.</td></tr>
+        <tr><td class="num">14</td><td><b>Assemble</b></td><td>Depth-tested alpha compositing</td><td><code>scripts/14_composite_layers.py</code></td><td>Person and iron are depth-tested per pixel (fingers in front of the handle, iron in front of the body), then layered over the room with a soft blend at the silhouette.</td></tr>
+        <tr><td class="num">15</td><td><b>Score and make the video</b></td><td>PSNR, SSIM, LPIPS, silhouette IoU, ring error, sharpness</td><td><code>scripts/11_metrics.py</code><br><code>scripts/16_eval_trackA.py</code><br><code>scripts/13_progress_video.py</code></td><td>Scores every frame against the real footage, then writes ORIGINAL | MINE at full resolution, H.264 CRF 14.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h3>Track B: fully modelled CG, step by step</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th style="width:4%">#</th><th style="width:13%">Step</th><th style="width:21%">Method</th><th style="width:22%">Code</th><th>What it does exactly</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td><b>Read the recording</b></td><td>MCAP decoding of zstd-compressed protobuf messages</td><td><code>scripts/01_inspect.py</code><br><code>scripts/02_extract.py</code></td><td>Extracts the 60 clip frames per camera (<code>out/clip/frames/&lt;cam&gt;/</code>), the lens intrinsics <code>K</code>, the head camera's per-frame pose <code>T_world_cam</code> and the 62 tracked joints <code>xyz</code> (F×62×3).</td></tr>
+        <tr><td class="num">2</td><td><b>Calibrate the cameras</b></td><td>Multi-view Perspective-n-Point (PnP), RANSAC + Levenberg–Marquardt</td><td><code>scripts/01b_calibrate.py</code></td><td>One fixed pose per tripod camera, solved with <code>cv2.solvePnPRansac</code> + <code>solvePnPRefineLM</code> over the joints of the whole 57 s recording. The head camera keeps its recorded per-frame pose. Writes <code>out/calib/static_cams.npz</code>.</td></tr>
+        <tr><td class="num">3</td><td><b>Detect 2D keypoints</b></td><td>2D human pose estimation (YOLO pose)</td><td><code>scripts/03a_detect_2d.py</code></td><td>COCO-17 keypoints on every frame of exocam1 and exocam2.</td></tr>
+        <tr><td class="num">4</td><td><b>Fit the body</b></td><td>Parametric body model fitting (Anny, 104 bones)</td><td><code>scripts/03b_fit_body.py</code></td><td>PyTorch optimisation. Per frame: every bone's rotation and the root position. Shared over the clip: body shape. Loss = 3D joint distance + 2D keypoint reprojection + temporal smoothness + a pose prior. Writes <code>out/body/fit.npz</code>; mean joint error 1.2 cm.</td></tr>
+        <tr><td class="num">5</td><td><b>Build the room</b></td><td>3D Gaussian Splatting, with per-camera colour and per-image exposure modelling</td><td><code>scripts/07_room_data.py</code><br><code>scripts/08_train_room.py</code><br><code>scripts/09_render_room.py</code></td><td>Trains a gsplat model on frames with the person masked out (YOLO segmentation ∪ the projected skeleton). Learns a pose correction per head-camera image, a 3×3 colour matrix + bias per camera, and an exposure gain per image. Renders at full 1920×1080.</td></tr>
+        <tr><td class="num">6</td><td><b>Sharpen the head-camera room</b></td><td>BARF-style coarse-to-fine pose refinement + MCMC densification</td><td><code>scripts/08b_train_room_sharp.py</code><br><code>scripts/09c_render_room_sharp.py</code></td><td>Fine-tunes the room for the head camera: poses are learned from step 0, the first steps run at half resolution, up to 2M Gaussians, and the blurriest 25% of frames are dropped.</td></tr>
+        <tr><td class="num">7</td><td><b>Colours</b></td><td>Closed-loop albedo calibration</td><td><code>scripts/03c_sample_colors.py</code><br><code>scripts/03d_calibrate_albedo.py</code></td><td>Measures the median real colour of each garment region (visible faces only), then scales the material albedo by real/rendered in linear light. Render, measure, repeat. Writes <code>out/body/albedo.json</code>.</td></tr>
+        <tr><td class="num">8</td><td><b>Clothes</b></td><td>Procedural garment modelling from the body surface + Taubin boundary smoothing</td><td><code>scripts/03e_garments.py</code></td><td>The tunic and wide trousers are cut from the Anny surface and pushed out along each frame's normals, flaring to the hems. The back hangs straight. There is a V opening with five button anchors, and the sleeve openings are snapped to clean cuff planes. Pin weights drive the cloth sim.</td></tr>
+        <tr><td class="num">9</td><td><b>Cloth motion</b></td><td>Physically based cloth simulation (Blender Cloth)</td><td><code>scripts/04_build_scene.py</code></td><td>The garments are simulated over the 60 frames, pinned at the shoulders and waist and free at the hems.</td></tr>
+        <tr><td class="num">10</td><td><b>Body, skin and hair</b></td><td>Shape-key animation + CC0 PBR skin textures</td><td><code>scripts/04_build_scene.py</code></td><td>The fitted Anny body is animated with per-frame shape keys, given a MakeHuman CC0 skin, and given modelled hair.</td></tr>
+        <tr><td class="num">11</td><td><b>Trim and buttons</b></td><td>Procedural shader masking</td><td><code>scripts/04_build_scene.py</code></td><td>The brown cuff, placket and pocket bands are smooth shader masks (<code>trim_mask()</code>). The buttons are pinned to the garment's vertices.</td></tr>
+        <tr><td class="num">12</td><td><b>Iron</b></td><td>Hard-surface 3D modelling</td><td><code>src/orbifold/cg_iron.py</code></td><td><code>build_iron()</code> builds a turquoise and white shell, window, dial and cord, keyframed from the per-frame iron pose.</td></tr>
+        <tr><td class="num">13</td><td><b>Render</b></td><td>Physically based path tracing (Blender Cycles, OptiX)</td><td><code>scripts/05_render.py</code></td><td>Full 1920×1080, a 1.0 px Blackman-Harris filter, the Standard view transform, no motion blur or depth of field, and a transparent film with a shadow catcher on the bed. In the head camera the head, hair, collar and buttons are hidden.</td></tr>
+        <tr><td class="num">14</td><td><b>Assemble</b></td><td>Alpha compositing over the room</td><td><code>scripts/06_compare.py</code></td><td>The CG person, the iron and their shadows are layered over the same room render.</td></tr>
+        <tr><td class="num">15</td><td><b>Score and make the video</b></td><td>PSNR, SSIM, LPIPS, silhouette IoU, sharpness</td><td><code>scripts/11_metrics.py</code><br><code>scripts/13_progress_video.py</code></td><td>Scores every frame against the real footage, then writes ORIGINAL | MINE at full resolution.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <img src="H1d_w2d02.jpg" alt="Fitted body outlines drawn over the real frames from all three cameras" loading="lazy">
+    <p class="cap">Step 4, body alignment check: the outline of the fitted body drawn over the real frames.</p>
+  </div>
+
+  <p class="cap">Main tools: mcap, OpenCV, PyTorch, YOLO (Ultralytics), SAM 2.1, gsplat, Anny, Blender 5.2 / Cycles (bpy), LPIPS, FFmpeg, uv.</p>
+
+  <div class="grid2">
+    <figure class="card" style="margin:0">
+      <img src="human_gs_progress_09999.jpg" alt="Learned person cut-out next to the original" loading="lazy">
+      <p class="cap">Track A: the learned person cut-out (Gaussians on the body mesh) next to the original, after 10k training steps.</p>
+    </figure>
+    <figure class="card" style="margin:0">
+      <img src="iron_masks_check.jpg" alt="Traced iron masks over the footage" loading="lazy">
+      <p class="cap">Track A: traced iron masks used to fit the iron's pose on each frame.</p>
+    </figure>
+  </div>
+
+  <div class="card">
+    <h3>The hand-modelled CG iron (Track B)</h3>
+    <div class="grid3">
+      <img src="cg_iron_preview_headcam.jpg" alt="CG iron preview, head camera" loading="lazy">
+      <img src="cg_iron_preview_exocam1.jpg" alt="CG iron preview, exocam1" loading="lazy">
+      <img src="cg_iron_preview_exocam2.jpg" alt="CG iron preview, exocam2" loading="lazy">
+    </div>
+    <p class="cap">Head camera, exocam1, exocam2. Built from scratch in Blender to match the real iron's shape and colours.</p>
+  </div>
+</section>
+
+<section id="scores">
+  <h2>4. Scores</h2>
+  <p>Track A numbers, per camera. Person scores are on <b>held-out frames</b> (not used for training). Higher is better except LPIPS, which measures perceptual difference (0 means identical).</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Measure</th><th>Headcam</th><th>Exocam1</th><th>Exocam2</th></tr></thead>
+    <tbody>
+      <tr><td>Person LPIPS (lower is better)</td><td class="num">0.13</td><td class="num">0.066</td><td class="num">0.067</td></tr>
+      <tr><td>Person PSNR</td><td class="num">25.4 dB</td><td class="num">25.9 dB</td><td class="num">27.1 dB</td></tr>
+      <tr><td>Person silhouette IoU</td><td class="num">0.94</td><td class="num">0.86</td><td class="num">0.88</td></tr>
+      <tr><td>Iron silhouette IoU</td><td class="num">0.82</td><td class="num">0.76</td><td class="num">0.42</td></tr>
+      <tr><td>Whole-frame sharpness (ratio to original)</td><td class="num">0.87</td><td class="num">0.80</td><td class="num">0.74</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="cap">Track B: CG iron silhouette IoU 0.83 in the head camera. Body joint fit error: 1.2 cm (both tracks). IoU is the overlap between my outline and the real outline (1.0 = perfect).</p>
+</section>
+
+<section id="brief">
+  <h2>5. How it meets the brief</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:18%">Criterion</th><th>What I did</th><th style="width:30%">Where it falls short</th></tr></thead>
+    <tbody>
+      <tr><td><b>Realism</b><br><span class="tag part">Partly</span></td>
+        <td>The room looks photographic in the tripod views. The Track A person is learned from real pixels, so the skin, clothing folds and lighting look real. Track B is sharp and fully modelled.</td>
+        <td>Track A has some streaks near the hands and a soft outline. Track B's person still looks CG. The head-camera background is soft.</td></tr>
+      <tr><td><b>Fidelity</b><br><span class="tag">Mostly</span></td>
+        <td>Each frame uses that frame's tracked pose at 30 fps, so timing matches by construction. Recorded camera lenses, solved tripod poses, 1.2 cm joint error, high silhouette overlap.</td>
+        <td>Only 2 s of the 57.6 s are rendered. The exocam2 iron overlap is low (0.42).</td></tr>
+      <tr><td><b>Physics</b><br><span class="tag part">Partly</span></td>
+        <td>The body follows the real tracked motion, the iron stays flat on the bed under the right hand, and nothing floats free.</td>
+        <td>The hand passes into the iron, because the tracked palm is about 2 cm below where the iron appears in the images. There is no simulated grip, and the ironed cloth does not move.</td></tr>
+      <tr><td><b>Honesty</b><br><span class="tag">Yes</span></td>
+        <td>All code is in <code>scripts/</code> and <code>src/</code>, flaws are listed here and in <code>SCORECARD.md</code>, and the scores of every round are kept.</td>
+        <td>The full pipeline has not been rerun from a fresh clone in one go. GPU stages need CUDA.</td></tr>
+      <tr><td><b>The one rule</b><br><span class="tag">Yes, with a disclosure</span></td>
+        <td>Every output pixel is rendered from 3D (Gaussian splats or Cycles meshes) and then layered. No footage pixels, filters or video models are used.</td>
+        <td>See the note below.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>Disclosure.</b> In Track A, the person and the room are learned from the same footage and rendered from the same camera viewpoints, so they fit those views closely. Held-out frames show it is not a copy: the person model still scores well on frames it never trained on. Track B is the stricter reading of the rule: its person and iron are modelled by hand and only the room is learned.</div>
+</section>
+
+<section id="flaws">
+  <h2>6. Known flaws and next steps</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Track A</h3>
+      <ul>
+        <li>Some streaks near the hands.</li>
+        <li>A soft outline around the person.</li>
+        <li>The head-camera background is softer than the original.</li>
+        <li>The hand intersects the iron: the tracked palm sits about 2 cm below the iron seen in the images.</li>
+      </ul>
+      <p><b>Next:</b> finish the full-resolution room retrain for the head camera; raise the iron to match the images or correct the palm offset; train longer with more views near the hands.</p>
+    </div>
+    <div class="card">
+      <h3>Track B (from user feedback)</h3>
+      <ul>
+        <li>The shirt colour is not matched per camera.</li>
+        <li>The hair should hang loose to the side, not sit in a bun.</li>
+        <li>The person overall still looks CG.</li>
+        <li>The clothing texture is flat.</li>
+      </ul>
+      <p><b>Next:</b> match the shirt colour per camera, restyle the hair, add fabric texture and wrinkles, and improve skin shading.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Both tracks</h3>
+    <ul>
+      <li>Only 2 s of the recording is rendered.</li>
+      <li>The trousers being ironed are part of the static room, so they do not move when ironed.</li>
+      <li>No contact physics: the iron follows the hand rather than being gripped.</li>
+    </ul>
+  </div>
+  <figure class="card" style="margin:16px 0 0">
+    <img src="headcam_before_after_sharp_room.jpg" alt="Head camera room render before and after the sharper room model" loading="lazy">
+    <p class="cap">Head camera, before and after the sharper room model. The background is better but still softer than the original.</p>
+  </figure>
+</section>
+
+<section id="history">
+  <h2>7. Iteration history</h2>
+  <p>Each round, original left and mine right. "Error" is the mean absolute pixel difference on a 0–255 scale (headcam / exocam1 / exocam2; lower is better). Lower error does not always mean more realistic.</p>
+  <div class="history">
+    <figure><img src="round0.jpg" alt="Round 0" loading="lazy"><figcaption><b>Round 0.</b> Test run: stick figure, box bed, flat grey room at 960×540. Error 124 / 68 / 78.</figcaption></figure>
+    <figure><img src="round1.jpg" alt="Round 1" loading="lazy"><figcaption><b>Round 1.</b> Room becomes a Gaussian splat trained on the footage; fixed tripod poses; full 1080p. Error 41 / 14 / 7.</figcaption></figure>
+    <figure><img src="round2.jpg" alt="Round 2" loading="lazy"><figcaption><b>Round 2.</b> Solid skinned body (shirt, skin, trousers), head hidden from the head camera, tapered iron. Error 48 / 15 / 7.</figcaption></figure>
+    <figure><img src="round3.jpg" alt="Round 3" loading="lazy"><figcaption><b>Round 3.</b> Room retrained to remove rainbow floaters; wider body; softer light. Error 52.3 / 13.6 / 6.5.</figcaption></figure>
+    <figure><img src="round4.jpg" alt="Round 4" loading="lazy"><figcaption><b>Round 4.</b> Anny body fitted to all 62 tracked joints, dressed by region. Error 48.9 / 12.4 / 6.8.</figcaption></figure>
+    <figure><img src="round5.jpg" alt="Round 5" loading="lazy"><figcaption><b>Round 5.</b> Fingertips fitted, colours from footage, 360° room lighting, ponytail, real iron model flat on the bed. Error 23.0 / 10.0 / 5.9.</figcaption></figure>
+  </div>
+  <p class="cap" style="margin-top:14px">After round 5 the work split into Track A (learned person and iron) and Track B (CG person and iron), shown at the top of this page.</p>
+</section>
+
+<footer>
+  Orbifold real-to-sim hackathon. Code: <code>scripts/</code> and <code>src/orbifold/</code>. Details: <code>README.md</code>, <code>SCORECARD.md</code>.
+</footer>
+
+</main>
+</body>
+</html>
